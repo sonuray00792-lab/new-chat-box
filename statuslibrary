@@ -1,0 +1,1051 @@
+/build
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.android)
+}
+
+android {
+    namespace = "com.example.statuslibrary"
+    compileSdk = 36
+
+    defaultConfig {
+        minSdk = 24
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        consumerProguardFiles("consumer-rules.pro")
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+}
+
+dependencies {
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material)
+    implementation(libs.androidx.activity)
+    implementation(libs.androidx.constraintlayout)
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+
+    //new
+
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("de.hdodenhof:circleimageview:3.1.0")
+// Firebase (Library me bhi chahiye)
+    implementation("com.google.firebase:firebase-auth:22.3.0")
+    implementation("com.google.firebase:firebase-database:21.0.0")
+}
+
+# Add project specific ProGuard rules here.
+# You can control the set of applied configuration files using the
+# proguardFiles setting in build.gradle.
+#
+# For more details, see
+#   http://developer.android.com/guide/developing/tools/proguard.html
+
+# If your project uses WebView with JS, uncomment the following
+# and specify the fully qualified class name to the JavaScript interface
+# class:
+#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
+#   public *;
+#}
+
+# Uncomment this to preserve the line number information for
+# debugging stack traces.
+#-keepattributes SourceFile,LineNumberTable
+
+# If you keep the line number information, uncomment this to
+# hide the original source file name.
+#-renamesourcefileattribute SourceFile
+package com.example.statuslibrary
+
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.ext.junit.runners.AndroidJUnit4
+
+import org.junit.Test
+import org.junit.runner.RunWith
+
+import org.junit.Assert.*
+
+/**
+ * Instrumented test, which will execute on an Android device.
+ *
+ * See [testing documentation](http://d.android.com/tools/testing).
+ */
+@RunWith(AndroidJUnit4::class)
+class ExampleInstrumentedTest {
+    @Test
+    fun useAppContext() {
+        // Context of the app under test.
+        val appContext = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals("com.example.statuslibrary.test", appContext.packageName)
+    }
+}
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity
+            android:name=".status_view"
+            android:exported="false" />
+        <activity
+            android:name=".statusActivity"
+            android:exported="false" />
+    </application>
+
+</manifest>
+package com.example.statuslibrary
+
+object StatusUtils {
+
+    private const val DAY_24 = 24 * 60 * 60 * 1000L
+
+    fun isExpired(timestamp: Long): Boolean {
+        val now = System.currentTimeMillis()
+        return now - timestamp > DAY_24
+    }
+}
+
+package com.example.statuslibrary
+
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Bundle
+import android.util.Log
+import android.widget.Button
+import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.example.statuslibrary.StatusUtils.isExpired
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.*
+import java.io.ByteArrayOutputStream
+
+
+private lateinit var statusbtn: Button
+
+private val pick_image = 101
+
+class statusActivity : AppCompatActivity() {
+
+    private lateinit var recyclerview: RecyclerView
+    private lateinit var adapter: status_adapter
+    private val statuslist = ArrayList<user_Status_model>()
+
+    private val dbref = FirebaseDatabase.getInstance().getReference("status")
+
+
+    var currentuid: String? = null
+
+    private var statusname: String = ""
+
+    private lateinit var statusListener: ValueEventListener
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        val user = FirebaseAuth.getInstance().currentUser
+        if (user == null) {
+            finish()
+            return
+        }
+        currentuid = user.uid
+
+        //statusbar color
+        window.statusBarColor = resources.getColor(R.color.spirit, theme)
+
+
+        setContentView(R.layout.activity_status)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            insets
+        }
+
+
+        recyclerview = findViewById<RecyclerView>(R.id.statusRecycler)
+        recyclerview.layoutManager = LinearLayoutManager(this, LinearLayoutManager.VERTICAL, false)
+
+
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        val theme = prefs.getString("theme", "light") ?: "light"
+
+        adapter = status_adapter(this, statuslist, object : status_adapter.Mystatusclicklistener{
+            override fun onmystatusclick() {
+                opengallery()
+            }
+
+            override fun onmystatusclick(uid: String) {
+                val intent = Intent(this@statusActivity, status_view::class.java)
+                intent.putExtra("userid",uid)
+                startActivity(intent)
+            }
+
+        },theme)
+
+        recyclerview.adapter = adapter
+
+        loadstatus()
+
+
+
+    }
+
+
+    private fun opengallery() {
+        val intent = Intent(Intent.ACTION_PICK)
+        intent.type = "image/*"
+        startActivityForResult(intent, pick_image)
+    }
+
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?,
+    ) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+
+
+        FirebaseDatabase.getInstance().getReference("user")
+            .child(currentuid!!)
+            .child("name")
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    statusname = snapshot.getValue(String::class.java) ?: "No name"
+
+
+
+                    if (requestCode == pick_image && resultCode == RESULT_OK && data!!.data != null) {
+                        val uri = data.data ?: return
+                        convertandupload(uri, statusname)
+
+                        Log.d("checkname", statusname)
+                    }
+
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    Toast.makeText(this@statusActivity, "Error fetching name", Toast.LENGTH_SHORT)
+                        .show()
+                }
+
+            })
+
+
+    }
+
+
+    private fun convertandupload(uri: Uri, stausname: String) {
+
+        val inputStream = contentResolver.openInputStream(uri)
+        val bitmap = BitmapFactory.decodeStream(inputStream)
+
+        val baos = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 40, baos)
+
+        val imageBytes = baos.toByteArray()
+        val base64Image =
+            android.util.Base64.encodeToString(imageBytes, android.util.Base64.DEFAULT)
+
+
+        val model = statusmodel(
+            stname = statusname,
+            media = base64Image,
+            timestamp = System.currentTimeMillis()
+        )
+
+
+        dbref.child(currentuid!!).push().setValue(model)
+            .addOnSuccessListener {
+                Toast.makeText(this, "Status Uploaded", Toast.LENGTH_SHORT).show()
+            }
+
+    }
+
+
+    //load in data to list for helping adapter
+    private fun loadstatus() {
+
+        statusListener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+
+                statuslist.clear()
+
+                val myStatusList = ArrayList<statusmodel>()
+                var myName = "My Status"
+
+                // 🔹 LOOP ALL USERS
+                for (usersnap in snapshot.children) {
+
+                    val userStatusList = ArrayList<statusmodel>()
+                    var username = ""
+
+                    for (statussnap in usersnap.children) {
+                        val model = statussnap.getValue(statusmodel::class.java) ?:continue
+
+                        if (isExpired(model.timestamp)) {
+                            // ❌ DELETE FROM FIREBASE
+                            statussnap.ref.removeValue()
+                        } else {
+                            // ✅ VALID STATUS
+                            userStatusList.add(model)
+                            username = model.stname ?: ""
+                        }
+
+                    }
+
+                    // 🔹 CURRENT USER → MY STATUS
+                    if (usersnap.key == currentuid) {
+                        myStatusList.addAll(userStatusList)
+                        if (username.isNotEmpty()) myName = "My Status"
+                    }
+                    // 🔹 OTHER USERS
+                    else if (userStatusList.isNotEmpty()) {
+                        statuslist.add(
+                            user_Status_model(
+                                userid = usersnap.key ?: "",
+                                username = username,
+                                statuses = userStatusList,
+                                isMyStatus = false
+                            )
+                        )
+                    }
+                }
+
+                // 🔝 ADD MY STATUS AT TOP (ALWAYS)
+                statuslist.add(
+                    0,
+                    user_Status_model(
+                        userid = currentuid ?: "",
+                        username = myName,
+                        statuses = myStatusList,
+                        isMyStatus = true
+                    )
+                )
+
+                adapter.notifyDataSetChanged()
+            }
+
+            override fun onCancelled(error: DatabaseError) {}
+        }
+
+        dbref.addValueEventListener(statusListener)
+    }
+
+
+    override fun onDestroy() {
+        super.onDestroy()
+        dbref.removeEventListener(statusListener)
+    }
+
+
+
+}
+package com.example.statuslibrary
+
+import android.content.Context
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.util.Base64
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
+
+
+class status_adapter(
+    private val context: Context,
+    private val list: ArrayList<user_Status_model>,
+    private val listener: Mystatusclicklistener,
+    private val theme: String
+) : RecyclerView.Adapter<status_adapter.ViewHolder>() {
+
+    interface Mystatusclicklistener {
+        fun onmystatusclick()
+        fun onmystatusclick(uid: String)
+
+    }
+
+
+    class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        // Image status ke liye
+        val imageView: ImageView =
+            itemView.findViewById(R.id.statusImage)
+
+        // User name
+        val name: TextView =
+            itemView.findViewById(R.id.statusName)
+
+        val time: TextView =
+            itemView.findViewById<TextView>(R.id.statusTime)
+
+    }
+
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): status_adapter.ViewHolder {
+        val view = LayoutInflater.from(context)
+            .inflate(R.layout.item_status, parent, false)
+
+        return ViewHolder(view)
+    }
+
+
+    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+
+        val user = list[position]
+
+        if (theme == "dark") {
+            holder.name.setTextColor(Color.WHITE)
+        } else {
+            holder.name.setTextColor(Color.BLACK)
+        }
+
+        if (user.isMyStatus) {
+            holder.name.text = "My Status"
+            holder.itemView.findViewById<View>(R.id.myStatusDivider).visibility = View.VISIBLE
+            holder.itemView.findViewById<ImageView>(R.id.heart).visibility = View.VISIBLE
+
+            if (user.statuses.isEmpty()) {
+                // New user / no status → open gallery
+                holder.time.text = "Tap to add status"
+                val currentuid = FirebaseAuth.getInstance().currentUser!!.uid
+                setProfileImageFromUserNode(currentuid, holder.imageView)
+
+                holder.itemView.setOnClickListener {
+                    listener.onmystatusclick() // open gallery
+                }
+
+            } else {
+                // Already has status → open status view
+                val lastStatus = user.statuses.last()
+                val bytes = Base64.decode(lastStatus.media, Base64.DEFAULT)
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                holder.imageView.setImageBitmap(bitmap)
+                holder.time.text = getTimeAgo(lastStatus.timestamp)
+
+                holder.itemView.setOnClickListener {
+                    listener.onmystatusclick(user.userid) // open own status
+                }
+            }
+
+        } else {
+            // Other users
+            holder.name.text = if (user.username.isBlank()) "No name" else user.username
+            val lastStatus = user.statuses.last()
+            val bytes = Base64.decode(lastStatus.media, Base64.DEFAULT)
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            holder.imageView.setImageBitmap(bitmap)
+            holder.imageView.visibility = View.VISIBLE
+            holder.time.text = getTimeAgo(lastStatus.timestamp)
+
+            holder.itemView.setOnClickListener {
+                listener.onmystatusclick(user.userid) // open other user's status
+            }
+        }
+    }
+
+
+
+    override fun getItemCount(): Int {
+        return list.size
+    }
+
+
+    //timing calculate function
+
+    fun getTimeAgo(time: Long): String {
+        val now = System.currentTimeMillis()
+        val diff = now - time
+
+        val minutes = diff / (1000 * 60)
+        val hours = diff / (1000 * 60 * 60)
+        val days = diff / (1000 * 60 * 60 * 24)
+
+        return when {
+            minutes < 1 -> "Just now"
+            minutes < 60 -> "$minutes min ago"
+            hours < 24 -> "$hours hr ago"
+            days == 1L -> "Yesterday"
+            else -> "$days days ago"
+        }
+    }
+
+    //showmystatuspicinimageview
+
+    fun setProfileImageFromUserNode(
+        uid: String,
+        imageView: ImageView
+    ) {
+        FirebaseDatabase.getInstance()
+            .getReference("user")
+            .child(uid)
+            .child("profileimage")
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val base64 = snapshot.getValue(String::class.java)
+                    if (!base64.isNullOrEmpty()) {
+                        val bytes = Base64.decode(base64, Base64.DEFAULT)
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        imageView.setImageBitmap(bitmap)
+                    } else {
+                        imageView.setImageResource(R.drawable.person)
+                    }
+                }
+
+                override fun onCancelled(error: DatabaseError) {}
+            })
+    }
+
+
+}
+package com.example.statuslibrary
+
+import android.graphics.BitmapFactory
+import android.os.Bundle
+import android.os.CountDownTimer
+import android.os.Handler
+import android.os.Looper
+import android.text.Layout
+import android.util.Base64
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import com.example.statuslibrary.StatusUtils.isExpired
+import com.google.firebase.database.*
+
+class status_view : AppCompatActivity() {
+
+    private lateinit var imageView: ImageView
+    private val handler = Handler(Looper.getMainLooper())
+
+    private val statusList = ArrayList<statusmodel>()
+    private var currentIndex = 0
+
+    private lateinit var progressBar : ProgressBar
+    private lateinit var profileimage : ImageView
+    private lateinit var usernametv : TextView
+    private lateinit var backstatus : ImageView
+
+    private var countDownTimer: CountDownTimer? = null
+    private var progress = 0
+
+
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_status_view)
+
+
+
+        imageView = findViewById(R.id.fullStatusImage)
+        progressBar = findViewById<ProgressBar>(R.id.statusprogress)
+        profileimage = findViewById<ImageView>(R.id.profileImage)
+        usernametv = findViewById<TextView>(R.id.username)
+        backstatus = findViewById<ImageView>(R.id.backstatus)
+
+
+        progressBar.max = 100
+        progressBar.progress = 0
+        progressBar.visibility = View.VISIBLE
+
+
+
+        //back status btn
+        backstatus.setOnClickListener {
+            finish()
+        }
+
+
+
+        window.statusBarColor = ContextCompat.getColor(this,R.color.black)
+
+
+        //get user id
+        val userid = intent.getStringExtra("userid") ?: run {
+            finish()
+            return
+        }
+
+
+        //click exit
+        val fullscreen = findViewById<FrameLayout>(R.id.clickmain)
+        fullscreen.setOnClickListener {
+            finish()
+        }
+
+        //call load fun
+        loadStatuses(userid)
+
+        //call load profile name and pic
+        loadprofile(userid)
+
+
+    }
+
+    private fun loadStatuses(userid: String) {
+
+        FirebaseDatabase.getInstance()
+            .getReference("status")
+            .child(userid)
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    statusList.clear()
+
+                    for (snap in snapshot.children) {
+                        val model = snap.getValue(statusmodel::class.java)
+                        if (model != null && !isExpired(model.timestamp)) {
+                            statusList.add(model)
+                        } else {
+                            // delete expired
+                            snap.ref.removeValue()
+                        }
+                    }
+
+                    if (statusList.isNotEmpty()) {
+                        showStatus()
+                    } else {
+                        finish()
+                    }
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    finish()
+                }
+            })
+    }
+
+    private fun showStatus() {
+
+        if (currentIndex >= statusList.size) {
+            finish()
+            return
+        }
+
+        val status = statusList[currentIndex]
+
+        val bytes = Base64.decode(status.media, Base64.DEFAULT)
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        imageView.setImageBitmap(bitmap)
+
+        startProgressTimer(5000)
+    }
+
+
+
+
+    private fun startProgressTimer(duration: Long) {
+
+        countDownTimer?.cancel()   // stop old timer
+        progressBar.progress = 0
+
+        countDownTimer = object : CountDownTimer(duration, 50) {
+            override fun onTick(millisUntilFinished: Long) {
+                val progress =
+                    ((duration - millisUntilFinished) * 100 / duration).toInt()
+                progressBar.progress = progress
+            }
+
+            override fun onFinish() {
+                progressBar.progress = 100
+                currentIndex++
+                showStatus()
+            }
+        }.start()
+    }
+
+
+
+
+    private fun loadprofile(userid: String){
+
+
+        FirebaseDatabase.getInstance().getReference("user")
+            .child(userid)
+            .addListenerForSingleValueEvent(object : ValueEventListener{
+
+                override fun onDataChange(snapshot: DataSnapshot) {
+
+                    val name = snapshot.child("name").getValue(String::class.java)
+                    usernametv.text = name
+
+                    val base64 = snapshot.child("profileimage").getValue(String::class.java)
+                    if (!base64.isNullOrEmpty()) {
+                        val bytes = Base64.decode(base64, Base64.DEFAULT)
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        profileimage.setImageBitmap(bitmap)
+                    } else {
+                        profileimage.setImageResource(R.drawable.manprofile)
+                    }
+
+                }
+
+                override fun onCancelled(error: DatabaseError) {}
+
+            })
+
+    }
+
+
+
+
+    override fun onDestroy() {
+        super.onDestroy()
+        countDownTimer?.cancel()
+    }
+}
+
+package com.example.statuslibrary
+
+data class statusmodel(
+    var stname: String? = null,
+    var media: String? = null,
+    var timestamp: Long = 0L,
+)
+
+package com.example.statuslibrary
+
+data class user_Status_model(
+    var userid : String = "",
+    var username : String = "",
+    var statuses : ArrayList<statusmodel> = ArrayList(),
+    val isMyStatus: Boolean = false
+)
+
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@android:color/white"/>
+</shape>
+
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:height="24dp" android:tint="#000000" android:viewportHeight="24" android:viewportWidth="24" android:width="24dp">
+      
+    <path android:fillColor="@android:color/white" android:pathData="M12,12c2.21,0 4,-1.79 4,-4s-1.79,-4 -4,-4 -4,1.79 -4,4 1.79,4 4,4zM12,14c-2.67,0 -8,1.34 -8,4v2h16v-2c0,-2.66 -5.33,-4 -8,-4z"/>
+    
+</vector>
+
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <stroke android:width="3dp" android:color="#25D366"/>
+</shape>
+
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <stroke
+        android:width="3dp"
+        android:color="#25D366"/>
+    <solid android:color="@android:color/transparent"/>
+</shape>
+
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+
+        <androidx.appcompat.widget.Toolbar
+            android:id="@+id/maintoolbar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/spirit"
+            android:paddingTop="0dp"
+            android:paddingBottom="0dp"
+            android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingTop="0dp"
+                    android:paddingBottom="0dp">
+
+                        <!-- Small logo -->
+                        <ImageView
+                            android:id="@+id/viberLogo"
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_marginEnd="8dp"
+                            android:adjustViewBounds="true"
+                            android:contentDescription="App Logo"
+                            android:scaleType="fitCenter"
+                            android:src="@drawable/viber_icon" />
+
+                        <!-- Title text -->
+                        <TextView
+                            android:id="@+id/viberTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="15dp"
+                            android:text="Status"
+                            android:textColor="@android:color/white"
+                            android:textSize="25sp"
+                            android:textStyle="bold" />
+
+                </LinearLayout>
+
+        </androidx.appcompat.widget.Toolbar>
+
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/statusRecycler"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginTop="8dp"/>
+
+</LinearLayout>
+
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/clickmain"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- STATUS IMAGE -->
+    <ImageView
+        android:id="@+id/fullStatusImage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="top"
+        android:adjustViewBounds="true"
+        android:layout_marginTop="70dp"
+        android:layout_marginBottom="40dp"
+        android:scaleType="centerCrop" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="10dp">
+
+        <ProgressBar
+            android:id="@+id/statusprogress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:indeterminate="false"
+            android:max="100"
+            android:progress="0" />
+
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/backstatus"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:tint="#FFFFFFFF"
+                android:paddingEnd="4dp"
+                android:paddingBottom="4dp"
+                android:paddingTop="4dp"
+                android:paddingStart="2dp"
+                android:src="@drawable/back" />
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/profileImage"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="3dp"
+                android:scaleType="centerCrop"
+                android:src="@drawable/person"
+                app:shapeAppearanceOverlay="@style/circle_bg" />
+
+            <TextView
+                android:id="@+id/username"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="Username"
+                android:textColor="#fff"
+                android:textSize="18sp" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+
+</FrameLayout>
+
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootItem"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="8dp">
+
+    <!-- MAIN ROW -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="72dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <!-- STATUS IMAGE WITH RING -->
+        <FrameLayout
+            android:layout_width="56dp"
+            android:layout_height="56dp">
+
+            <View
+                android:id="@+id/statusRing"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/status_ring" />
+
+            <ImageView
+                android:id="@+id/statusImage"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="center"
+                android:background="@drawable/image_circle"
+                android:clipToOutline="true"
+                android:scaleType="centerCrop" />
+        </FrameLayout>
+
+        <!-- TEXT + HEART -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginEnd="12dp"
+            android:layout_marginStart="10dp"> <!-- reduced margin -->
+
+            <!-- TEXT -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/statusName"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:maxLines="1"
+                    android:textColor="#000"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:ellipsize="end" />
+
+                <TextView
+                    android:id="@+id/statusTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#777"
+                    android:textSize="13sp"
+                    android:ellipsize="end"
+                    android:maxLines="1" />
+            </LinearLayout>
+
+            <!-- HEART ICON -->
+            <ImageView
+                android:id="@+id/heart"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/heart"
+                android:tint="@color/spirit"
+                android:visibility="gone" /> <!-- show only for my status -->
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- ⭐ BEAUTIFUL MY STATUS LINE -->
+    <View
+        android:id="@+id/myStatusDivider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginTop="5dp"
+        android:background="#E6E6E6"
+        android:visibility="gone" />
+</LinearLayout>
+
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <color name="spirit">#15A38C</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+</resources>
+<resources></resources>
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="circle_bg">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">50%</item>
+    </style>
+
+</resources>
+package com.example.statuslibrary
+
+import org.junit.Test
+
+import org.junit.Assert.*
+
+/**
+ * Example local unit test, which will execute on the development machine (host).
+ *
+ * See [testing documentation](http://d.android.com/tools/testing).
+ */
+class ExampleUnitTest {
+    @Test
+    fun addition_isCorrect() {
+        assertEquals(4, 2 + 2)
+    }
+}
